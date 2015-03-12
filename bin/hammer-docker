@@ -1,0 +1,187 @@
+#!/usr/bin/env node
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ */
+
+/*
+ * Copyright (c) 2015, Joyent, Inc.
+ */
+
+var dashdash = require('cmdln/node_modules/dashdash');
+var docker = require('../lib/docker');
+var utils = require('../lib/utils');
+var vasync = require('vasync');
+
+var options;
+var opts;
+var parser;
+
+var DEFAULT_CONCURRENCY = 2;
+var DEFAULT_RUNS = 10;
+
+var completed = 0;
+var idx = 0;
+var results = [];
+var runs;
+
+// define the options
+options = [
+    {
+        names: ['help', 'h'],
+        type: 'bool',
+        help: 'Print this help and exit.'
+    },
+    {
+        names: ['concurrency', 'c'],
+        type: 'positiveInteger',
+        help: 'Number of simultaneous jobs',
+        helpArg: 'VALUE'
+    },
+    {
+        names: ['docker', 'd'],
+        type: 'string',
+        help: 'Docker CMD',
+        helpArg: 'DOCKER_CMD'
+    },
+    {
+        names: ['runs', 'r'],
+        type: 'positiveInteger',
+        help: 'Number of jobs',
+        helpArg: 'VALUE'
+    }
+];
+
+function dumpHelp()
+{
+    var help;
+
+    help = parser.help({includeEnv: true}).trimRight();
+    console.log('\nusage: hammer-docker [OPTIONS]\n'
+        + 'options:\n' + help + '\n');
+}
+
+function dockerCycle(thing_number, callback) {
+    var begin = (new Date()).getTime();
+
+    docker.runAndDestroy(function (err, res) {
+        var delta;
+        var end = (new Date()).getTime();
+
+        delta = end - begin;
+
+        if (err) {
+            console.log(thing_number + ':FAIL: ' + res.uuid + ':' + res.name
+                + ' (' + delta + ' ms) -- ' + utils.trim(err.message));
+
+            results.push({
+                delta: delta,
+                error: err.message,
+                name: res.name,
+                result: 'failure',
+                stderr: err.stderr,
+                stdout: err.stdout,
+                uuid: res.uuid
+            });
+        } else {
+            console.log(thing_number + ': ' + res.uuid + ':' + res.name
+                + ' (' + delta + ' ms)');
+
+            results.push({
+                delta: delta,
+                name: res.name,
+                result: 'success',
+                uuid: res.uuid
+            });
+        }
+
+        callback();
+    });
+}
+
+function done() {
+    var sum;
+    completed++;
+
+    if (completed === runs || (completed % 10) === 0) {
+        console.log(' => results: ' + results.length);
+        console.log(' => successes: ' + results.filter(
+            function _success_filter(element, index, array) {
+                if (element.result === 'success') {
+                    return (true);
+                }
+                return (false);
+            }
+        ).length);
+        console.log(' => failures: ' + results.filter(
+            function _failure_filter(element, index, array) {
+                if (element.result === 'failure') {
+                    return (true);
+                }
+                return (false);
+            }
+        ).length);
+        sum = results.reduce(function _delta_summer(prev, curr) {
+            return (prev + curr.delta);
+        }, 0);
+        console.log(' => total time: ' + sum);
+        console.log(' => avg time: ' + Math.ceil(sum / results.length));
+        // XXX add median, break up by create/destroy times?
+    }
+    if (completed === runs) {
+        // XXX bits we only print on *final* summary such as:
+        //
+        //  * total elapsed wall-time
+        //  * list of slowest uuids
+        //
+    }
+}
+
+function main()
+{
+    var concurrency;
+    var queue;
+
+    // parse the cmdline
+    parser = dashdash.createParser({options: options});
+    try {
+        opts = parser.parse(process.argv);
+    } catch (e) {
+        console.error('hammer-docker: error: %s', e.message);
+        process.exit(1);
+    }
+
+    if (opts.help) {
+        dumpHelp();
+        process.exit(0);
+    }
+
+    if (opts.concurrency) {
+        concurrency = opts.concurrency;
+    } else {
+        concurrency = DEFAULT_CONCURRENCY;
+    }
+
+    if (opts.runs) {
+        runs = opts.runs;
+    } else {
+        runs = DEFAULT_RUNS;
+    }
+
+    if (opts.docker) {
+        process.env.DOCKER_CMD = opts.docker;
+    }
+
+    queue = vasync.queue(dockerCycle, concurrency);
+
+    queue.on('empty', function () {
+        if (idx < runs) {
+            queue.push(idx++, done);
+        }
+    });
+
+    queue.push(idx++, done);
+}
+
+main();

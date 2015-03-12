@@ -1,0 +1,19 @@
+{
+  "name": "sdc-hammer",
+  "description": "Smash SDC",
+  "version": "0.0.0",
+  "author": "Josh Wilsdon (joyent.com)",
+  "private": true,
+  "dependencies": {
+    "bunyan": "1.3.4",
+    "cmdln": "3.0.2",
+    "sdc-clients": "git+ssh://git@github.com:joyent/node-sdc-clients.git#5502654",
+    "assert-plus": "0.1.5",
+    "vasync": "1.6.2"
+  },
+  "devDependencies": {
+  },
+  "optionalDependencies": {
+  },
+  "license": "MPL-2.0"
+}
