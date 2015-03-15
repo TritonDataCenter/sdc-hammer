@@ -46,6 +46,11 @@ options = [
         helpArg: 'DOCKER_CMD'
     },
     {
+        names: ['keep', 'k'],
+        type: 'bool',
+        help: 'Keep containers, don\'t delete after creating'
+    },
+    {
         names: ['runs', 'r'],
         type: 'positiveInteger',
         help: 'Number of jobs',
@@ -64,8 +69,15 @@ function dumpHelp()
 
 function dockerCycle(thing_number, callback) {
     var begin = (new Date()).getTime();
+    var fn;
 
-    docker.runAndDestroy(function (err, res) {
+    fn = docker.runAndDestroy;
+
+    if (opts.keep) {
+        fn = docker.run;
+    }
+
+    fn(function _fn_callback(err, res) {
         var delta;
         var end = (new Date()).getTime();
 
