@@ -1,0 +1,182 @@
+#!/usr/bin/env node
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ */
+
+/*
+ * Copyright (c) 2015, Joyent, Inc.
+ */
+
+var dashdash = require('cmdln/node_modules/dashdash');
+var docker = require('../lib/docker');
+var utils = require('../lib/utils');
+var vasync = require('vasync');
+
+var options;
+var opts;
+var parser;
+
+var DEFAULT_CONCURRENCY = 2;
+var DEFAULT_RUNS = 10;
+
+var completed = 0;
+var lookup = {};
+var results = [];
+var runs;
+
+// define the options
+options = [
+    {
+        names: ['help', 'h'],
+        type: 'bool',
+        help: 'Print this help and exit.'
+    },
+    {
+        names: ['concurrency', 'c'],
+        type: 'positiveInteger',
+        help: 'Number of simultaneous jobs',
+        helpArg: 'VALUE'
+    },
+    {
+        names: ['docker', 'd'],
+        type: 'string',
+        help: 'Docker CMD',
+        helpArg: 'DOCKER_CMD'
+    }
+];
+
+function dumpHelp()
+{
+    var help;
+
+    help = parser.help({includeEnv: true}).trimRight();
+    console.log('\nusage: hammer-docker-destroy [OPTIONS]\n'
+        + 'options:\n' + help + '\n');
+}
+
+function dockerDestroyCycle(id, callback) {
+    var begin = (new Date()).getTime();
+    var idx = lookup[id];
+
+    delete lookup[id];
+
+    docker.dockerDestroy(id, function _destroy_callback(err) {
+        var delta;
+        var end = (new Date()).getTime();
+
+        delta = end - begin;
+
+        if (err) {
+            console.log(idx + ':FAIL: ' + id + ' (' + delta + ' ms) -- '
+                + utils.trim(err.message));
+
+            results.push({
+                delta: delta,
+                error: err.message,
+                id: id,
+                result: 'failure',
+                stderr: err.stderr,
+                stdout: err.stdout
+            });
+        } else {
+            console.log(idx + ': ' + id + ' (' + delta + ' ms)');
+
+            results.push({
+                delta: delta,
+                id: id,
+                result: 'success'
+            });
+        }
+
+        callback();
+    });
+}
+
+function done() {
+    var sum;
+    completed++;
+
+    if (completed === runs || (completed % 10) === 0) {
+        console.log(' => results: ' + results.length + '/' + runs);
+        console.log(' => successes: ' + results.filter(
+            function _success_filter(element, index, array) {
+                if (element.result === 'success') {
+                    return (true);
+                }
+                return (false);
+            }
+        ).length);
+        console.log(' => failures: ' + results.filter(
+            function _failure_filter(element, index, array) {
+                if (element.result === 'failure') {
+                    return (true);
+                }
+                return (false);
+            }
+        ).length);
+        sum = results.reduce(function _delta_summer(prev, curr) {
+            return (prev + curr.delta);
+        }, 0);
+        console.log(' => total time: ' + sum);
+        console.log(' => avg time: ' + Math.ceil(sum / results.length));
+        // XXX add median, break up by create/destroy times?
+    }
+    if (completed === runs) {
+        // XXX bits we only print on *final* summary such as:
+        //
+        //  * total elapsed wall-time
+        //  * list of slowest uuids
+        //
+    }
+}
+
+function main()
+{
+    var concurrency;
+    var idx = 0;
+    var queue;
+
+    // parse the cmdline
+    parser = dashdash.createParser({options: options});
+    try {
+        opts = parser.parse(process.argv);
+    } catch (e) {
+        console.error('hammer-docker-destroy: error: %s', e.message);
+        process.exit(1);
+    }
+
+    if (opts.help) {
+        dumpHelp();
+        process.exit(0);
+    }
+
+    if (opts.concurrency) {
+        concurrency = opts.concurrency;
+    } else {
+        concurrency = DEFAULT_CONCURRENCY;
+    }
+
+    if (opts.docker) {
+        process.env.DOCKER_CMD = opts.docker;
+    }
+
+    queue = vasync.queue(dockerDestroyCycle, concurrency);
+
+    docker.getShorts(function (err, shorts) {
+        if (err) {
+            console.error('hammer-docker-destroy: error: %s', err.message);
+            return;
+        }
+
+        runs = shorts.length;
+
+        shorts.forEach(function (id) {
+            lookup[id] = idx++;
+            queue.push(id, done);
+        });
+    });
+}
+
+main();
