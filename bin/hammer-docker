@@ -51,6 +51,12 @@ options = [
         help: 'Keep containers, don\'t delete after creating'
     },
     {
+        names: ['prefix', 'p'],
+        type: 'string',
+        help: 'A prefix that will be stuck on each container name',
+        helpArg: 'PREFIX'
+    },
+    {
         names: ['runs', 'r'],
         type: 'positiveInteger',
         help: 'Number of jobs',
@@ -70,6 +76,7 @@ function dumpHelp()
 function dockerCycle(thing_number, callback) {
     var begin = (new Date()).getTime();
     var fn;
+    var fn_opts = {};
 
     fn = docker.runAndDestroy;
 
@@ -77,7 +84,11 @@ function dockerCycle(thing_number, callback) {
         fn = docker.run;
     }
 
-    fn(function _fn_callback(err, res) {
+    if (opts.prefix) {
+        fn_opts.prefix = opts.prefix;
+    }
+
+    fn(fn_opts, function _fn_callback(err, res) {
         var delta;
         var end = (new Date()).getTime();
 
