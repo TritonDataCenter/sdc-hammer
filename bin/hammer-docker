@@ -98,9 +98,20 @@ function dockerCycle(thing_number, callback) {
             console.log(thing_number + ':FAIL: ' + res.uuid + ':' + res.name
                 + ' (' + delta + ' ms) -- ' + utils.trim(err.message));
 
+            if (err.message.match('creating')) {
+                type = 'create';
+            } else if (err.message.match('deleting')) {
+                type = 'delete';
+            } else if (err.message.match('starting')) {
+                type = 'start';
+            } else {
+                type = utils.trim(err.message);
+            }
+
             results.push({
                 delta: delta,
                 error: err.message,
+                type: type,
                 name: res.name,
                 result: 'failure',
                 stderr: err.stderr,
@@ -124,6 +135,7 @@ function dockerCycle(thing_number, callback) {
 }
 
 function done() {
+    var failure_types = {};
     var sum;
     completed++;
 
@@ -140,11 +152,16 @@ function done() {
         console.log(' => failures: ' + results.filter(
             function _failure_filter(element, index, array) {
                 if (element.result === 'failure') {
+                    failure_types[element.type] = (failure_types[element.type]
+                        ? failure_types[element.type] + 1 : 1);
                     return (true);
                 }
                 return (false);
             }
         ).length);
+        Object.keys(failure_types).sort().forEach(function (k) {
+            console.log('  \\_ ' + k + ': ' + failure_types[k]);
+        });
         sum = results.reduce(function _delta_summer(prev, curr) {
             return (prev + curr.delta);
         }, 0);
